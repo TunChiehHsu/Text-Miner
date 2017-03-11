@@ -1,0 +1,351 @@
+---
+title: "Final Project"
+author: Text Miner - Group 9
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## install necessary packages
+# install.packages("wordcloud")
+# install.packages("cluster")
+#install.packages("igraph")
+
+```
+
+
+### Overall 
+In this Final project, we aim to use our knowledge of `text mining, ggplot, shiny app, tm_map, and some machine learning algorithms and visulization` to build a small interactive app allowing users to input texts and get results of `word frequency, wordcloud, relationships between words and hierarchical agglomerative clustering`. The whole project was bulit up on 3 parts: text mining; visualization; shiny.
+
+
+
+### Part1. Text mining 
+The text mining part is to input the file, to clean it up and to output a table where each word and its appearing frequency are listed. The cleaning method is using `stringr` and `gsub`, and `tm_map` where we get rid of all punctuations, numbers, simple letters, and small words which have less than four letters in it. Besides, as we don't want the stop words, such as "I", "and", and "the", we delete them as well. In many cases, words need to be stemmed to retrieve their radicals. For instance, "example" and "examples" are both stemmed to "exampl". We apply the function `tm_map(.,stemDocument)` to stem each word in the article. At the end, we output a dataframe which contains two columns: words and frequency.
+
+
+
+```{r}
+# load packages
+library(purrr)
+library(magrittr)
+library(stringr)
+library(dplyr)
+library(tm)
+library(SnowballC)
+library(knitr)
+
+file = "texts.txt"
+data = readLines(file) %>% as.list()
+  
+# clean data 
+clean_text = function(val)
+  {
+    # delete punctuations and numbers
+    val = gsub("[[:punct:]]", " ", val)
+    val = gsub("[[:digit:]]+", " ", val)
+    # clean it up
+    clean_a =  val %>%
+      tolower() %>%
+      str_split(" ") 
+    
+    delete_single = function(x){
+      if(length(x) != 1){
+        x = x[-which(sapply(x,nchar) == 1)]
+      }
+      return(x)
+    }
+    
+    clean_a = lapply(clean_a,function(x) x[x  != "" & ! x %in% stopwords("en")])
+    clean_a = lapply(clean_a,delete_single)
+    clean_a = lapply(clean_a, function(x) paste(x,collapse = " "))
+    clean_a = clean_a[clean_a != ""]
+    
+    return(clean_a)
+  }
+  
+data = clean_text(data)
+  
+# stemming 
+stem = function(val){
+  text = Corpus(VectorSource(val))
+  text = tm_map(text, removeWords, stopwords("english"))
+  text = tm_map(text,stemDocument)  
+  text = tm_map(text, stripWhitespace) 
+  text = tm_map(text, PlainTextDocument) 
+  TermDocumentMatrix(text, control = list(minWordLength = 1))
+}
+
+myDtm = stem(data)
+
+# compute frequency and output data frame
+freq_table = function(val){
+  # find frequency:
+  freq = colSums(t(as.matrix(val)))
+  # order   
+  ord = rev(order(freq))
+  
+  # output df
+  data_frame(word=names(freq), freq=freq) %>%
+    group_by(word) %>% 
+    arrange(desc(freq))
+  
+}
+  
+df = freq_table(myDtm)
+# print table
+df %>%
+    kable(caption = "Frequency Table")
+```
+
+### Part2. Visualization 
+In this part, we plot 5 graphs to display different kinds of information we gathered in the text file input by user. We first visualize the word-frequency table we get in part 1 using ggplot. Then we require wordcloud library and display word frequency in the form of wordcloud with different size and color to show different levels of frequency. Users can also choose how many words they want in the wordcloud. Figure 3 is about Hierarchical Clustering, which shows the hierachical relationships between some of the representative words. We plot Figure 4 by first calculating distance between words & then clustering them according to similarity. The k-means clustering attempts to cluster words into a specified number of groups. The Figure 5 is the network visualization of the correlation. The width of edges represent the scale of correlation among words and the size of the labels are the scale of frequencies.   
+
+```{r}
+
+  library(ggplot2)
+  ## Figure 1. Barplot
+  #The n used most word histogram
+  n = 10
+  hist_data = df[1:n,]
+  ggplot(hist_data, aes(reorder(word, -freq), freq))+
+    geom_bar(stat="identity") +
+    theme_minimal() +
+    theme(axis.text.x=element_text(angle=45, hjust=1)) +
+    ylab("Frequency") + xlab("")
+     
+  ## Figure 2. Word Clound
+  library(wordcloud)
+  # choose how many words wanted in the wordcloud 
+  max.words= 100
+  wordcloud(df$word, df$freq, max.words = max.words, 
+            scale = c(4,0.5), colors = brewer.pal(8, "Dark2") )
+      
+  ## Figure 3. Hierarchical Clustering
+  library(cluster)   
+  # remove sparse terms
+  Sparse = 0.83
+  dtmss = removeSparseTerms(myDtm, Sparse) 
+  d = dist((dtmss), method = "euclidian")
+  fit = hclust(d = d, method = "ward.D")
+  
+  plot(fit, hang=-1, 
+       xlab = "", sub ="")   
+  
+  rect.hclust(fit, k=5, border="red") # draw dendogram with red borders around the 5 clusters   
+  groups = cutree(fit, k=5)   # "k=" defines the number of clusters you are using   
+  
+  ## Figure 4
+  kfit = kmeans(d, 5)   
+  clusplot(as.matrix(d), kfit$cluster, 
+           color=T, shade=T, labels=2, lines=0,
+           main = "")
+  
+  # figure 5
+  library(igraph)
+  termDocMatrix = as.matrix(dtmss)
+  termDocMatrix[termDocMatrix>=1] = 1
+  termMatrix = termDocMatrix %*% t(termDocMatrix)
+  g = graph.adjacency(termMatrix, weighted=T, mode = "undirected")
+  V(g)$label = V(g)$name
+  V(g)$degree = degree(g)
+  # remove loops
+  g = simplify(g)
+  V(g)$label.cex = log(rank(V(g)$degree)) + 1
+  V(g)$label.color = rgb(0, 0, .2, .8)
+  V(g)$frame.color = NA
+  egam = (log(E(g)$weight)+.4) / max(log(E(g)$weight)+.4)
+  E(g)$color = rgb(.5, .5, 0, egam)
+  E(g)$width = egam*2
+
+  plot(g)
+
+```
+
+
+### Part3. Shiny App
+
+This shiny app basically implements Part 1 and Part 2, but it allows users to upload their own text file and also customize the visualization. The shiny app will return table and plots, showing the frequency and correlation of those words inthe text file. 
+
+On the sidebar panel, users could upload a ".txt" file from their local environment. Then the original text that users selected will appear on the main panel. We apply a tabset panel on the main panel side. The tabset devides our output table and plots into multiple independently viewable sections, including frequency table, histogram, word cloud, hierarchical clustering, K-Means, and newwork. When users select certain sections, a sliderbar may appear so that they are able to change some parameters to customize the visualization. For frequency table and histogram, users could alter the number of the most frequent words. For hierarchical clustering and K-Means, users could change `sparsity` and `number of clusters`. (The larger the `sparsity`, the more words will remain for clustering.) 
+
+In general, this app will help users analyze their text rapidly and also provide them with customized plots. 
+
+The demo file could be downloaded from "https://www.dropbox.com/s/6slvodjrci9jkwb/texts.txt?dl=0". Users could download the text file and upload it in this Shiny App for demo.
+
+```{r}
+# load packages
+# library(shiny)
+
+# call shiny app
+shinyApp(
+  ui = fluidPage(
+      titlePanel("Text Miner"),
+      
+      hr(),
+      
+      sidebarPanel(
+        # select a file 
+        fileInput("file", label = h3("Source"), multiple = FALSE),
+        
+        # add a reset button 
+        actionButton("reset", "Reset File"),
+      
+        # reset fileInput 
+        tags$script('
+               Shiny.addCustomMessageHandler("resetFileInputHandler", function(x) {      
+
+               var id = "#" + x + "_progress";
+
+               var idBar = id + " .bar";
+
+               $(id).css("visibility", "hidden");
+
+               $(idBar).css("width", "0%");
+
+                 });
+
+              '),
+      
+      # parameters for each plot
+      conditionalPanel(condition="input.conditionedPanels==2",
+                       hr(),
+                       h3("Parameters"),
+                       helpText("Number of Most Frequent Words"),
+                       sliderInput("n1", label = "", min = 1, max = 100, 
+                                 value = 20, step = 1)),
+      
+      conditionalPanel(condition="input.conditionedPanels==3",
+                       hr(),
+                       h3("Parameters"),
+                       helpText("Number of Most Frequent Words"),
+                       sliderInput("n2", label = "", min = 1, max = 100, 
+                                 value = 50, step = 1)),
+      
+      conditionalPanel(condition="input.conditionedPanels == 4 ||
+                       input.conditionedPanels == 5||input.conditionedPanels == 6",
+                       hr(),
+                       h3("Parameters"),
+                       helpText("Sparsity"),
+                       sliderInput("sparsity", label = "", min = 0, max = 1, 
+                                 value = 0.8, step = 0.01)),
+      
+      conditionalPanel(condition="input.conditionedPanels==4 || input.conditionedPanels==5",
+                       hr(),
+                       helpText("Number of clusters"),
+                       sliderInput("k", label = "", min = 1, max = 10, 
+                                 value = 5, step = 1))     
+      
+      ),
+    
+    mainPanel(
+      
+      # show plots 
+      tabsetPanel(
+        tabPanel("Original Text", value = 1, verbatimTextOutput("value")),
+        tabPanel("Frequency Table", dataTableOutput("table1")),
+        tabPanel("Histogram", value = 2, plotOutput("plot1")), 
+        tabPanel("Word Cloud", value = 3, plotOutput("plot2")), 
+        tabPanel("Hierarchical Clustering", value = 4, plotOutput("plot3")),
+        tabPanel("KMeans", value = 5, plotOutput("plot4")),
+        tabPanel("Network", value = 6, plotOutput("plot5")),
+        id = "conditionedPanels"
+      )
+    )
+   ),
+  
+  server = function(input, output, session) {
+    
+    file = reactive(input$file)
+    
+    data = reactive({
+      if (is.null(file())){
+        NULL
+      } else {
+        readLines(file()$name) %>% as.list()
+        }
+    })
+    
+    output$value = renderPrint(
+      data()
+    )
+    
+    myDtm = reactive({
+      clean_data = clean_text(data())
+      stem(clean_data)
+    })
+
+    df = reactive({
+      freq_table(myDtm())
+    })
+    
+    output$table1 = renderDataTable(
+      df()
+    )
+    
+    output$plot1 = renderPlot({
+      hist_data = df()[1:input$n1,]
+      ggplot(hist_data, aes(reorder(word, -freq), freq))+
+        geom_bar(stat="identity") +
+        theme_minimal() +
+        theme(axis.text.x=element_text(angle=45, hjust=1)) +
+        ylab("Frequency") + xlab("")
+    })
+    
+    output$plot2 = renderPlot({
+      wordcloud(df()$word, df()$freq, 
+            max.words = input$n2, scale = c(4,0.5),
+            colors = brewer.pal(8, "Dark2") )
+      })
+    
+    dtmss = reactive({
+      removeSparseTerms(myDtm(), input$sparsity)       
+    })
+
+    d = reactive(dist((dtmss()), method = "euclidian"))
+      
+    fit = reactive(hclust(d = d(), method = "ward.D"))
+    
+    output$plot3 = renderPlot({
+      # remove sparse terms
+      plot(fit(), hang=-1, xlab = "", sub ="")
+      rect.hclust(fit(), input$k, border="red") # draw dendogram with red borders around the 5 clusters   
+      groups = cutree(fit(), input$k)   # "k=" defines the number of clusters you are using 
+    })
+
+     output$plot4 = renderPlot({
+         kfit = kmeans(d(), input$k)   
+         clusplot(as.matrix(d()), kfit$cluster, main = "",
+                  color=T, shade=T, labels=2, lines=0)
+     })
+     
+     output$plot5  = renderPlot({
+         termDocMatrix = as.matrix(dtmss())
+         termDocMatrix[termDocMatrix>=1] = 1
+         termMatrix = termDocMatrix %*% t(termDocMatrix)
+         g = graph.adjacency(termMatrix, weighted=T, mode = "undirected")
+         V(g)$label = V(g)$name
+         V(g)$degree = degree(g)
+         # remove loops
+         g = simplify(g)
+         V(g)$label.cex = log(rank(V(g)$degree)) + 1
+         V(g)$label.color = rgb(0, 0, .2, .8)
+         V(g)$frame.color = NA
+         egam = (log(E(g)$weight)+.4) / max(log(E(g)$weight)+.4)
+         E(g)$color = rgb(.5, .5, 0, egam)
+         E(g)$width = egam*2
+         plot(g)
+     })
+     
+     observe({
+       input$reset
+       session$sendCustomMessage(type = "resetFileInputHandler", "file")   
+    })
+
+     
+
+
+  }
+)
+
+
+```
