@@ -6,35 +6,35 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-## install necessary packages
-# install.packages("wordcloud")
-# install.packages("cluster")
-#install.packages("igraph")
+require(devtools)
+install_version("tm", version = "0.6-2", repos = "http://cran.r-project.org")
+
+# load packages
+library(SnowballC)
+library(ggplot2)
+library(purrr)
+library(magrittr)
+library(stringr)
+library(dplyr)
+library(SnowballC)
+library(knitr)
+library(igraph)
 
 ```
 
 
-### Overall 
-In this Final project, we aim to use our knowledge of `text mining, ggplot, shiny app, tm_map, and some machine learning algorithms and visulization` to build a small interactive app allowing users to input texts and get results of `word frequency, wordcloud, relationships between words and hierarchical agglomerative clustering`. The whole project was bulit up on 3 parts: text mining; visualization; shiny.
+### Overview
 
+In this Final project, we aim to use our knowledge of `text mining, ggplot, shiny app, tm_map, and some machine learning algorithms and visulization` to build a small interactive app allowing users to input texts and get results of `word frequency, wordcloud, relationships between words and hierarchical agglomerative clustering`. The whole project was bulit up on 3 parts: text mining; visualization; shiny.
 
 
 ### Part1. Text mining 
 The text mining part is to input the file, to clean it up and to output a table where each word and its appearing frequency are listed. The cleaning method is using `stringr` and `gsub`, and `tm_map` where we get rid of all punctuations, numbers, simple letters, and small words which have less than four letters in it. Besides, as we don't want the stop words, such as "I", "and", and "the", we delete them as well. In many cases, words need to be stemmed to retrieve their radicals. For instance, "example" and "examples" are both stemmed to "exampl". We apply the function `tm_map(.,stemDocument)` to stem each word in the article. At the end, we output a dataframe which contains two columns: words and frequency.
 
 
-
 ```{r}
-# load packages
-library(purrr)
-library(magrittr)
-library(stringr)
-library(dplyr)
-library(tm)
-library(SnowballC)
-library(knitr)
 
-file = "texts.txt"
+file = "/Users/mueric35/Downloads/nipstxt/nips02/0018.txt"
 data = readLines(file) %>% as.list()
   
 # clean data 
@@ -64,7 +64,7 @@ clean_text = function(val)
   }
   
 data = clean_text(data)
-  
+
 # stemming 
 stem = function(val){
   text = Corpus(VectorSource(val))
@@ -72,7 +72,7 @@ stem = function(val){
   text = tm_map(text,stemDocument)  
   text = tm_map(text, stripWhitespace) 
   text = tm_map(text, PlainTextDocument) 
-  TermDocumentMatrix(text, control = list(minWordLength = 1))
+  tm::TermDocumentMatrix(text, control = list(minWordLength = 1))
 }
 
 myDtm = stem(data)
@@ -117,13 +117,13 @@ In this part, we plot 5 graphs to display different kinds of information we gath
   library(wordcloud)
   # choose how many words wanted in the wordcloud 
   max.words= 100
-  wordcloud(df$word, df$freq, max.words = max.words, 
+  wordcloud::wordcloud(df$word, df$freq, max.words = max.words, 
             scale = c(4,0.5), colors = brewer.pal(8, "Dark2") )
       
   ## Figure 3. Hierarchical Clustering
   library(cluster)   
   # remove sparse terms
-  Sparse = 0.83
+  Sparse = 0.9
   dtmss = removeSparseTerms(myDtm, Sparse) 
   d = dist((dtmss), method = "euclidian")
   fit = hclust(d = d, method = "ward.D")
@@ -131,11 +131,11 @@ In this part, we plot 5 graphs to display different kinds of information we gath
   plot(fit, hang=-1, 
        xlab = "", sub ="")   
   
-  rect.hclust(fit, k=5, border="red") # draw dendogram with red borders around the 5 clusters   
-  groups = cutree(fit, k=5)   # "k=" defines the number of clusters you are using   
+  rect.hclust(fit, k = dtmss$nrow-1 , border="red") # draw dendogram with red borders around the 5 clusters   
+  groups = cutree(fit, k= dtmss$nrow - 1)   # "k=" defines the number of clusters you are using   
   
   ## Figure 4
-  kfit = kmeans(d, 5)   
+  kfit = kmeans(d, dtmss$nrow - 2)   
   clusplot(as.matrix(d), kfit$cluster, 
            color=T, shade=T, labels=2, lines=0,
            main = "")
@@ -149,7 +149,7 @@ In this part, we plot 5 graphs to display different kinds of information we gath
   V(g)$label = V(g)$name
   V(g)$degree = degree(g)
   # remove loops
-  g = simplify(g)
+  # g = simplify(g)
   V(g)$label.cex = log(rank(V(g)$degree)) + 1
   V(g)$label.color = rgb(0, 0, .2, .8)
   V(g)$frame.color = NA
@@ -174,7 +174,7 @@ The demo file could be downloaded from "https://www.dropbox.com/s/6slvodjrci9jkw
 
 ```{r}
 # load packages
-# library(shiny)
+library(shiny)
 
 # call shiny app
 shinyApp(
@@ -227,7 +227,7 @@ shinyApp(
                        h3("Parameters"),
                        helpText("Sparsity"),
                        sliderInput("sparsity", label = "", min = 0, max = 1, 
-                                 value = 0.8, step = 0.01)),
+                                 value = 0.87, step = 0.01)),
       
       conditionalPanel(condition="input.conditionedPanels==4 || input.conditionedPanels==5",
                        hr(),
@@ -254,22 +254,22 @@ shinyApp(
    ),
   
   server = function(input, output, session) {
-    
     file = reactive(input$file)
     
     data = reactive({
       if (is.null(file())){
         NULL
       } else {
-        readLines(file()$name) %>% as.list()
+        readLines(file()$datapath) %>% as.list()
         }
     })
-    
     output$value = renderPrint(
       data()
     )
     
-    myDtm = reactive({
+    data = reactive({readLines(file()$datapath) %>% as.list})
+    
+        myDtm = reactive({
       clean_data = clean_text(data())
       stem(clean_data)
     })
@@ -340,10 +340,6 @@ shinyApp(
        input$reset
        session$sendCustomMessage(type = "resetFileInputHandler", "file")   
     })
-
-     
-
-
   }
 )
 
